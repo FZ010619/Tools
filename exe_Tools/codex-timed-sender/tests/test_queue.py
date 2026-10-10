@@ -44,3 +44,12 @@ class QueueStoreTests(unittest.TestCase):
         self.assertEqual([item.identifier for item in state.items], ["two"])
         self.assertEqual(state.items[0].draft.text, "已修改")
 
+    def test_preserves_unreadable_queue_as_backup_instead_of_silently_overwriting(self):
+        self.store.path.write_text("{broken", encoding="utf-8")
+
+        state = self.store.load()
+
+        self.assertEqual(state.items, [])
+        self.assertIsNotNone(self.store.load_error)
+        self.assertFalse(self.store.path.exists())
+        self.assertEqual(len(list(Path(self.directory.name).glob("queue.json.corrupt-*"))), 1)

@@ -17,7 +17,7 @@ from timed_sender.windows import WindowsDesktopAdapter
 
 
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
-STATUS_LABELS = {QueueItemStatus.PENDING: "待发送", QueueItemStatus.SENT: "已发送", QueueItemStatus.FAILED: "发送失败"}
+STATUS_LABELS = {QueueItemStatus.PENDING: "待发送", QueueItemStatus.IN_FLIGHT: "发送中", QueueItemStatus.SENT: "已发送", QueueItemStatus.FAILED: "发送失败"}
 
 
 def build_plan(target: TargetWindow | None, text: str, file_paths: tuple[Path, ...], image_path: Path | None, send_at: datetime, send_key: str) -> tuple[ScheduledDelivery | None, str | None]:
@@ -71,7 +71,7 @@ class TimedSenderApp:
         self.interval_text = tk.StringVar(value=str(settings.interval_seconds))
         self.confirm_first = tk.BooleanVar(value=settings.confirm_first)
         self.send_key = tk.StringVar(value="enter")
-        self.status = tk.StringVar(value="可编辑草稿并加入队列。")
+        self.status = tk.StringVar(value=self.store.load_error or "可编辑草稿并加入队列。")
         self._build()
         self.refresh_queue()
 
@@ -261,7 +261,7 @@ class TimedSenderApp:
         if error:
             self.status.set(error)
             return
-        self.runner.replace_settings(settings)
+        self.runner.configure(settings)
         self.status.set("队列已启动，将在恢复时间后按顺序投递。")
         self.schedule_tick()
 

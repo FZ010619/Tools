@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import os
+from contextlib import contextmanager
+from ctypes import wintypes
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum
@@ -12,6 +15,7 @@ from .models import Draft
 
 class QueueItemStatus(str, Enum):
     PENDING = "pending"
+    IN_FLIGHT = "in_flight"
     SENT = "sent"
     FAILED = "failed"
 
@@ -50,8 +54,10 @@ def default_queue_path() -> Path:
 class QueueStore:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or default_queue_path()
+        self.load_error: str | None = None
 
     def load(self) -> QueueState:
+        self.load_error = None
         if not self.path.is_file():
             return QueueState([], QueueSettings())
         try:
@@ -60,7 +66,39 @@ class QueueStore:
             items = [self._item_from_dict(item) for item in payload.get("items", [])]
             return QueueState(items, settings)
         except (OSError, ValueError, TypeError, KeyError):
+            backup = self.path.with_name(f"{self.path.name}.corrupt-{datetime.now().strftime('%Y%m%d%H%M%S%f')}")
+            try:
+                self.path.replace(backup)
+                self.load_error = f"队列文件无法读取，已备份为：{backup.name}"
+            except OSError:
+                self.load_error = "队列文件无法读取，未改动原文件。"
             return QueueState([], QueueSettings())
+
+    @contextmanager
+    def delivery_lock(self):
+        if os.name != "nt":
+            yield True
+            return
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        handle = kernel32.CreateMutexW(None, False, "Local\\CodexTimedSenderDeliveryLock")
+        if not handle:
+            yield False
+            return
+        kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
+        kernel32.ReleaseMutex.argtypes = (wintypes.HANDLE,)
+        kernel32.ReleaseMutex.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        acquired = kernel32.WaitForSingleObject(handle, 0) == 0
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                kernel32.ReleaseMutex(handle)
+            kernel32.CloseHandle(handle)
 
     def save(self, state: QueueState) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

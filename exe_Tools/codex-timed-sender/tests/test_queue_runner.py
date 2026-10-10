@@ -19,6 +19,17 @@ class FakeDelivery:
         return self.results.pop(0)
 
 
+class FailingSentSaveStore(QueueStore):
+    def __init__(self, path):
+        super().__init__(path)
+        self.fail_sent_save = False
+
+    def save(self, state):
+        if self.fail_sent_save and any(item.status is QueueItemStatus.SENT for item in state.items):
+            raise OSError("disk unavailable")
+        super().save(state)
+
+
 class QueueRunnerTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -99,3 +110,55 @@ class QueueRunnerTests(unittest.TestCase):
         self.assertEqual(resumed.sent_identifier, "two")
         self.assertEqual([plan.draft.text for plan in delivery.plans], ["one", "two"])
 
+    def test_interrupted_in_flight_item_is_paused_for_manual_review_after_restart(self):
+        item = QueueItem("one", Draft("one", ()), "enter", self.now, QueueItemStatus.IN_FLIGHT)
+        self.store.save(QueueState([item], QueueSettings(resume_at=self.now, paused=False)))
+
+        restarted, delivery = self.runner(self.store.load(), DeliveryResult(True, "已发送。"))
+        result = restarted.tick(self.now, self.target)
+
+        self.assertIsNone(result.sent_identifier)
+        self.assertEqual(delivery.plans, [])
+        self.assertEqual(restarted.state.items[0].status, QueueItemStatus.FAILED)
+        self.assertTrue(restarted.state.settings.paused)
+
+    def test_second_runner_reloads_state_and_does_not_duplicate_delivery(self):
+        state = QueueState([self.item("one")], QueueSettings(resume_at=self.now, paused=False))
+        self.store.save(state)
+        first_delivery = FakeDelivery([DeliveryResult(True, "已发送。")])
+        second_delivery = FakeDelivery([DeliveryResult(True, "已发送。")])
+        first = QueueRunner(self.store, first_delivery)
+        second = QueueRunner(self.store, second_delivery)
+
+        first.tick(self.now, self.target)
+        second.tick(self.now, self.target)
+
+        self.assertEqual(len(first_delivery.plans), 1)
+        self.assertEqual(second_delivery.plans, [])
+
+    def test_save_failure_after_delivery_requires_manual_review_after_restart(self):
+        store = FailingSentSaveStore(self.store.path)
+        store.save(QueueState([self.item("one")], QueueSettings(resume_at=self.now, paused=False)))
+        store.fail_sent_save = True
+        runner = QueueRunner(store, FakeDelivery([DeliveryResult(True, "已发送。")]))
+
+        runner.tick(self.now, self.target)
+        restarted = QueueRunner(QueueStore(self.store.path), FakeDelivery([DeliveryResult(True, "已发送。")]))
+        result = restarted.tick(self.now, self.target)
+
+        self.assertTrue(restarted.state.settings.paused)
+        self.assertEqual(restarted.state.items[0].status, QueueItemStatus.FAILED)
+        self.assertIsNone(result.sent_identifier)
+
+    def test_configure_preserves_active_interval_and_confirmation_guards(self):
+        runner, delivery = self.runner(
+            QueueState([self.item("one"), self.item("two")], QueueSettings(resume_at=self.now, paused=False, confirm_first=True)),
+            DeliveryResult(True, "已发送。"),
+        )
+        runner.tick(self.now, self.target)
+
+        runner.configure(QueueSettings(resume_at=self.now, interval_seconds=1, paused=False, confirm_first=False))
+        blocked = runner.tick(self.now, self.target)
+
+        self.assertIsNone(blocked.sent_identifier)
+        self.assertEqual(len(delivery.plans), 1)
