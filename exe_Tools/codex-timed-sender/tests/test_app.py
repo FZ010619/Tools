@@ -41,3 +41,9 @@ class PlanBuilderTests(unittest.TestCase):
         self.assertEqual(item.identifier, "item-1")
         self.assertEqual(item.draft.text, "继续处理")
         self.assertEqual(item.send_key, "ctrl_enter")
+
+    def test_queue_settings_convert_minutes_to_seconds(self):
+        target = TargetWindow(1, 2, "Codex")
+        settings, error = build_queue_settings(target, "2026-10-10 12:00:00", "2", False)
+        self.assertIsNone(error)
+        self.assertEqual(settings.interval_seconds, 120)

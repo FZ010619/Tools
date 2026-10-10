@@ -47,7 +47,7 @@ def build_queue_settings(target: TargetWindow | None, resume_text: str, interval
         return None, "发送间隔必须是正整数秒。"
     if interval_seconds < 1:
         return None, "发送间隔必须是正整数秒。"
-    return QueueSettings(resume_at, interval_seconds, paused=False, confirm_first=confirm_first), None
+    return QueueSettings(resume_at, interval_seconds * 60, paused=False, confirm_first=confirm_first), None
 
 
 class TimedSenderApp:
@@ -68,7 +68,7 @@ class TimedSenderApp:
         self.target_text = tk.StringVar(value="未绑定（重启程序后需要重新绑定）")
         self.image_text = tk.StringVar(value="未选择图片")
         self.resume_text = tk.StringVar(value=(settings.resume_at or datetime.now()).strftime(TIME_FORMAT))
-        self.interval_text = tk.StringVar(value=str(settings.interval_seconds))
+        self.interval_text = tk.StringVar(value=str(max(1, (settings.interval_seconds + 59) // 60)))
         self.confirm_first = tk.BooleanVar(value=settings.confirm_first)
         self.send_key = tk.StringVar(value="enter")
         self.status = tk.StringVar(value=self.store.load_error or "可编辑草稿并加入队列。")
@@ -133,7 +133,7 @@ class TimedSenderApp:
         ttk.Label(schedule, text="额度恢复时间：").grid(row=0, column=0, sticky="w")
         ttk.Entry(schedule, textvariable=self.resume_text, width=22).grid(row=0, column=1, sticky="w")
         ttk.Label(schedule, text="YYYY-MM-DD HH:MM:SS").grid(row=0, column=2, padx=8, sticky="w")
-        ttk.Label(schedule, text="每条间隔（秒）：").grid(row=1, column=0, pady=(6, 0), sticky="w")
+        ttk.Label(schedule, text="每条间隔（分钟）：").grid(row=1, column=0, pady=(6, 0), sticky="w")
         ttk.Entry(schedule, textvariable=self.interval_text, width=8).grid(row=1, column=1, pady=(6, 0), sticky="w")
         ttk.Checkbutton(schedule, text="首条发送后等我确认再继续", variable=self.confirm_first).grid(row=1, column=2, pady=(6, 0), padx=8, sticky="w")
         buttons = ttk.Frame(schedule)
