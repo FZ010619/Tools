@@ -44,11 +44,34 @@ class WindowsDesktopAdapter:
     def activate(self, target: TargetWindow) -> bool:
         user32.ShowWindow(target.handle, SW_RESTORE)
         user32.SetForegroundWindow(target.handle)
+        if self._wait_for_foreground(target.handle):
+            return True
+        if self._try_attach_foreground_input(target.handle):
+            return self._wait_for_foreground(target.handle)
+        return False
+
+    @staticmethod
+    def _wait_for_foreground(handle: int) -> bool:
         for _ in range(15):
-            if user32.GetForegroundWindow() == target.handle:
+            if user32.GetForegroundWindow() == handle:
                 return True
             time.sleep(0.1)
         return False
+
+    @staticmethod
+    def _try_attach_foreground_input(target_handle: int) -> bool:
+        foreground_handle = user32.GetForegroundWindow()
+        if not foreground_handle:
+            return False
+        current_thread = kernel32.GetCurrentThreadId()
+        foreground_thread = user32.GetWindowThreadProcessId(foreground_handle, None)
+        attached = foreground_thread != current_thread and bool(user32.AttachThreadInput(current_thread, foreground_thread, True))
+        try:
+            user32.BringWindowToTop(target_handle)
+            return bool(user32.SetForegroundWindow(target_handle))
+        finally:
+            if attached:
+                user32.AttachThreadInput(current_thread, foreground_thread, False)
 
     def paste_text(self, text: str) -> bool:
         if not self._set_clipboard(CF_UNICODETEXT, (text + "\0").encode("utf-16-le")):
